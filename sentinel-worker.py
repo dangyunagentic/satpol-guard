@@ -339,6 +339,7 @@ def scan_nginx_logs(events):
                 if not m:
                     continue
                 ip, ts_raw, req, status = m.group(1), m.group(2), m.group(3), m.group(4)
+                method = None
                 ua = None
                 um = re.search(r'"([^"]*)"\s*$', line)
                 if um:
