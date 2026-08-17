@@ -41,19 +41,19 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-STATE_DIR = Path(os.environ.get("SENTINEL_STATE_DIR", "/opt/satpol/state"))
+STATE_DIR = Path(os.environ.get("SENTINEL_STATE_DIR", "/opt/sentinel/state"))
 EVENTS_FILE = STATE_DIR / "events.jsonl"
 OFFSETS_FILE = STATE_DIR / "offsets.json"
 STRIKES_FILE = STATE_DIR / "strikes.json"
 SNAPSHOT_FILE = STATE_DIR / "snapshot.json"
 SENT_FILE = STATE_DIR / "sent_ids.json"     # dedupe per-event (id event terkirim)
 LOCK_FILE = STATE_DIR / "send.lock"          # single-instance lock
-ENV_FILE = "/etc/satpol/env"              # TELEGRAM_BOT_TOKEN / TELEGRAM_HOME_CHANNEL
+ENV_FILE = "/root/.hermes/.env"              # TELEGRAM_BOT_TOKEN / TELEGRAM_HOME_CHANNEL
 
 CONTAINERS = ["mintbot-api-1", "mintbot-web-1", "mintbot-worker-1"]
 NGINX_LOGS = ["/var/log/nginx/sentinel-access.log", "/var/log/nginx/access.log"]
 SSH_LOG = "/var/log/auth.log"
-HEALTHZ_URL = "http://127.0.0.1/healthz"
+HEALTHZ_URL = os.environ.get("SATPOL_HEALTHZ_URL", "https://jawirznich.my.id/healthz")
 
 STRIKE_WINDOW = 900          # 15 min sliding window
 EVENT_WINDOW = 86400         # keep events 24h
@@ -137,7 +137,7 @@ AUTO_FIX_JAIL = {
     "deser_framework_probe": "nginx-waf",
     "credential_probe": "nginx-waf",
 }
-IGNORE_IPS = {"127.0.0.1", "::1", "localhost", "{{VPS_IP}}", "{{WHITELIST_1}}", "{{WHITELIST_2}}"}
+IGNORE_IPS = {"127.0.0.1", "::1", "localhost", "129.226.220.129", "104.28.245.124", "103.81.194.206"}
 
 
 # ---------------------------------------------------------------------------
@@ -626,7 +626,7 @@ def format_event(ev, fix=None):
     if fix:
         lines.append(f"• **Aksi:** `{fix}`")
     lines.append("")
-    lines.append("`SATPOL · {{VPS_IP}}`")
+    lines.append("`SATPOL · 129.226.220.129`")
     return "\n".join(lines)
 
 
@@ -714,6 +714,12 @@ def send_events(events, quiet=False):
     leftover = len(pending) - len(batch)
     sent = 0
     for i, ev in enumerate(batch):
+        # SKIP notif: IP whitelist / internal / ga jelas — tapi tetap di-log di events
+        ip = ev.get("ip", "")
+        if ip in IGNORE_IPS or not ip or ip == "?" or ip == "127.0.0.1" or ip == "::1":
+            seen.append(event_id(ev))
+            save_json(SENT_FILE, seen)
+            continue
         fix = auto_fix(ev)
         msg = format_event(ev, fix)
         if DRY_RUN:
@@ -741,7 +747,7 @@ def send_events(events, quiet=False):
     # --- health check ---
     health_issues = []
     try:
-        out = subprocess.run(["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", HEALTHZ_URL],
+        out = subprocess.run(["curl", "-s", "-L", "-o", "/dev/null", "-w", "%{http_code}", HEALTHZ_URL],
                              capture_output=True, text=True, timeout=10).stdout
         if out.strip() != "200":
             health_issues.append(f"healthz {HEALTHZ_URL} → {out.strip() or 'no response'}")
