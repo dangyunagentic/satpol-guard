@@ -1,0 +1,18 @@
+[Unit]
+Description=SATPOL Real-Time Security Worker (VPS {{VPS_IP}})
+After=network.target docker.service nginx.service fail2ban.service
+Wants=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/satpol/sentinel-worker.py --daemon
+Restart=always
+RestartSec=5
+WorkingDirectory=/opt/satpol
+Environment=SENTINEL_DELAY=5
+Environment=SENTINEL_MAX=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,95 @@
+# SATPOL WAF — nginx reverse proxy + request logging + filtering
+# Fronts aplikasi lu (:80) — semua request di-log + difilter.
+# Port backend di-set pas install (default: web 8080, api 3001).
+# Kalau cuma 1 app, samain dua-duanya ke port yang sama.
+
+log_format sentinel '$remote_addr|$time_local|$request_method|$request_uri|$status|$http_user_agent';
+
+upstream app_web {
+    server 127.0.0.1:{{WEB_PORT}};
+    keepalive 16;
+}
+
+upstream app_api {
+    server 127.0.0.1:{{API_PORT}};
+    keepalive 16;
+}
+
+# NOTE: nginx map regex keys cannot contain ';' (terminates the value).
+# All regexes below avoid semicolons.
+
+map $request_uri $waf_sqli {
+    default 0;
+    ~*(union\s+select|select\s+.*from|insert\s+into|update\s+.*set|delete\s+from|sleep\s*\(|benchmark\s*\(|pg_sleep|waitfor\s+delay|information_schema|extractvalue|updatexml|concat\s*\(|group_concat|%27|--\s*$) 1;
+}
+
+map $request_uri $waf_traversal {
+    default 0;
+    ~*(\.\./|\.\.%2f|%2e%2e%2f|/etc/passwd|/etc/shadow|win\.ini|php://|file:///) 1;
+}
+
+map $request_uri $waf_rce {
+    default 0;
+    ~*(\$\(|/bin/sh|/bin/bash|nc\s+-e|wget\s+http|curl\s+http|powershell|cmd\.exe|\bsh\b) 1;
+}
+
+map $http_user_agent $waf_scanner {
+    default 0;
+    ~*(sqlmap|nuclei|nikto|acunetix|nessus|masscan|zgrab|wpscan|joomscan|burpsuite) 1;
+}
+
+map $request_uri $waf_sensitive {
+    default 0;
+    ~*(^/\.env|\.git/|\.aws/|id_rsa|\.ssh/|phpmyadmin|adminer|actuator/) 1;
+}
+
+server {
+    listen 80 default_server;
+    server_name _;
+    access_log /var/log/nginx/sentinel-access.log sentinel;
+    error_log /var/log/nginx/sentinel-error.log;
+
+    if ($waf_sqli = 1)      { return 429; }
+    if ($waf_traversal = 1) { return 429; }
+    if ($waf_rce = 1)       { return 429; }
+    if ($waf_scanner = 1)   { return 429; }
+    if ($waf_sensitive = 1) { return 429; }
+
+    location = /healthz {
+        access_log off;
+        return 200 "ok\n";
+    }
+
+    location /api/ {
+        proxy_pass http://app_api;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 120s;
+    }
+
+    location /socket.io/ {
+        proxy_pass http://app_api;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    location / {
+        proxy_pass http://app_web;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}

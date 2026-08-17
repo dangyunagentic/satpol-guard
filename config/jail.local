@@ -1,0 +1,30 @@
+[DEFAULT]
+# BAN INSTANT — 1x percobaan mencurigakan → ban permanent
+bantime = -1
+findtime = 600
+maxretry = 1
+# WHITELIST — IP Autumn (jangan pernah ban)
+ignoreip = 127.0.0.1/8 ::1 {{VPS_IP}} {{WHITELIST_1}} {{WHITELIST_2}}
+
+[sshd]
+enabled = true
+port = ssh
+logpath = /var/log/auth.log
+maxretry = 1
+bantime = -1
+
+[nginx-waf]
+enabled = true
+port = http,https
+logpath = /var/log/nginx/sentinel-access.log
+filter = nginx-sentinel
+maxretry = 1
+bantime = -1
+
+[recidive]
+enabled = true
+logpath = /var/log/fail2ban.log
+banaction = %(banaction_allports)s
+bantime = -1
+findtime = 86400
+maxretry = 1
